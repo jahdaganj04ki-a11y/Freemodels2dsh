@@ -1,0 +1,29 @@
+# Cordis patch for dsh-freemodels-arena-native.
+#
+# This file is the complete route declaration. It is either
+#   * shipped with the package (this default = the coding router only), or
+#   * regenerated from your live Arena catalog with
+#         node bin/arena-setup.mjs --sync
+#     which keeps the structure below and replaces the models list.
+#
+# The route is served by DeepSeek Harness' own @deepseek-ai/dsh-llm-pi-ai
+# adapter, i.e. DSH talks to Arena directly — no local gateway, no port.
+# The key is referenced as a credential (apiKeyEnv), never written here.
+- insert:
+    - id: arena-plugin
+      name: dsh-freemodels-arena-native
+    - id: freemodels-arena-route
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          arena:
+            displayName: Arena
+            api: openai-completions
+            baseURL: https://api.arena.ai/v1
+            apiKeyEnv: ARENA_API_KEY
+            models:
+              - id: coding-router-preview
+                name: Arena Coding Router
+                contextWindow: 1000000
+                maxTokens: 128000
+                input: [text, image]

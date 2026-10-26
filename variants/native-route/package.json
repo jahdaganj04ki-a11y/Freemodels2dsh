@@ -1,0 +1,45 @@
+{
+  "name": "dsh-freemodels-arena-native",
+  "version": "0.1.0",
+  "description": "DSH Desktop plugin variant: declares Arena as a native OpenAI-compatible route for DeepSeek Harness' llm-pi-ai adapter — no local gateway, no port, no extra process.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "bin": {
+    "arena-setup": "./bin/arena-setup.mjs"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "bin",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "setup": "node bin/arena-setup.mjs",
+    "sync": "node bin/arena-setup.mjs --sync",
+    "doctor": "node bin/arena-setup.mjs --doctor"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh-desktop",
+    "deepseek-harness",
+    "llm-pi-ai",
+    "arena"
+  ],
+  "license": "MIT",
+  "private": true
+}

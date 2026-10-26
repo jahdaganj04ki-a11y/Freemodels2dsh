@@ -5,10 +5,20 @@ aktuellen Windows-Version (getestet gegen **DSH Desktop 0.12.1 / Harness
 `@deepseek-ai/dsh@0.2.1-rc.2`**). Es macht die Modelle deines Arena-Accounts im
 Modellwähler von DSH Desktop nutzbar.
 
-Das Plugin startet im Harness-Prozess ein **lokales, OpenAI-kompatibles Gateway**
-auf `http://127.0.0.1:8787/v1`. DSH spricht dieses Gateway wie jeden anderen
-OpenAI-Provider an; das Gateway hängt deinen **Arena-API-Key** an und leitet die
-Anfrage an Arena weiter.
+Dafür gibt es zwei Bauformen — gleiches Ziel, unterschiedliche Architektur:
+
+| | **Variante A — Gateway** (dieser Ordner) | **Variante B — native Route** ([`variants/native-route`](variants/native-route)) |
+|---|---|---|
+| Weg | `DSH → 127.0.0.1:8787 → api.arena.ai` | `DSH → api.arena.ai` (direkt, `llm-pi-ai`) |
+| Prozess | eigenes lokales Gateway im Harness | kein Server, kein Port |
+| Modellkatalog | live, mit Cache und Fallback | vom Setup-CLI in den Patch geschrieben (`--sync`) |
+| Key | bleibt im Gateway-Prozess | aus der Prozessumgebung (`apiKeyEnv`) |
+| Extra | Retry/Timeout, Statusseite, optionales lokales Token, Allowlist | minimal, am Harness-Standardpfad |
+
+Variante A ist im Folgenden beschrieben. Kurzfassung: Das Plugin startet im
+Harness-Prozess ein **lokales, OpenAI-kompatibles Gateway** auf
+`http://127.0.0.1:8787/v1`; DSH spricht es wie jeden anderen OpenAI-Provider an,
+das Gateway hängt deinen **Arena-API-Key** an und leitet die Anfrage weiter.
 
 ```
 DSH Desktop (Windows)
@@ -25,7 +35,14 @@ DSH Desktop (Windows)
   dokumentierten Arena-API-Zugang (`platform.arena.ai`, Gateway `api.arena.ai/v1`)
   mit **deinem eigenen API-Key**. Es werden keine Cookies, Sitzungen oder
   Web-Oberflächen von arena.ai nachgebaut, kein User-Agent gefälscht und keine
-  Ratenbegrenzung umgangen.
+  Ratenbegrenzung umgehen.
+  Grund: Die Arena-Nutzungsbedingungen (Stand 2026-02-23, §5) untersagen
+  ausdrücklich, „auf die Dienste über programmatische oder automatisierte Mittel
+  zuzugreifen oder die Dienste automatisch abzufragen“, ebenso Scraping und
+  Crawling. Ein Cookie-/Session-Bridge zur Web-Oberfläche wäre also ein
+  ToS-Verstoß (und würde Accounts gefährden) — deshalb gibt es so etwas hier
+  bewusst **nicht**, in keiner Variante. Wer Arena-Modelle programmatisch nutzen
+  will, braucht einen API-Key über `platform.arena.ai`.
 * **Kein kostenloser Zugang ohne Account.** „Kostenlos“ heißt hier: du nutzt die
   Modelle, die dein Arena-Tarif bzw. dein Key freigibt, ohne zusätzliches
   DSH-Modell-Abo. Welche Modelle und Kontingente das sind, entscheidet Arena –
@@ -241,6 +258,8 @@ node bin/arena-gateway.mjs --port 8788 --log-level debug
 * `lib/key-store.js` – Key-Auflösung und -Ablage
 * `index.js` – Cordis-Plugin-Hälfte für DSH (startet/stoppt das Gateway)
 * `docs/technik.md` – Architektur, geprüfte Verträge, Grenzen
+* `variants/native-route/` – Variante B, eigenständiges Paket mit eigenen Tests
+  (`cd variants/native-route && node --test "test/*.test.mjs"`)
 
 ## Lizenz
 

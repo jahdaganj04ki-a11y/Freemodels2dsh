@@ -19,6 +19,13 @@ Claude Code. Genau diese OpenAI-Kompatibilität nutzt das Gateway: DSH spricht
 `GET /v1/models` und `POST /v1/chat/completions` (streaming und nicht-streaming),
 das sind die Schnittstellen, die jeder OpenAI-Provider in DSH erwartet.
 
+Rechtlicher Rahmen: die Arena-Nutzungsbedingungen (Fassung 2026-02-23) verbieten
+in §5 (vi)/(vii) den programmatischen/automatisierten Zugriff auf den Dienst sowie
+Scraping und Crawling. Deshalb gibt es in diesem Repository **keine** Anbindung an
+die Web-Oberfläche (Cookies, Session-Tokens, reCAPTCHA-Beschaffung, Browser-
+Automatisierung). Beide Varianten sprechen ausschließlich `api.arena.ai` mit einem
+eigenen Key an.
+
 Konsequenzen, die bewusst so gewählt sind:
 
 * Beim Weiterleiten wird **kein** Client-Header gefälscht (kein Claude-Code-
@@ -150,7 +157,27 @@ GET `/v1/models` liefert `{object:"list",data:[{id,object,created,owned_by,name,
   entstanden; sie sind defensiv geschrieben (nur PS 5.1-Syntax), aber bitte
   Fehlermeldungen melden, falls ein Cmdlet bei dir anders heißt.
 
-## 7. Testabdeckung
+## 7. Variante B (native Route)
+
+`variants/native-route/` ist ein eigenständiges Paket mit anderer Architektur:
+
+* keine eigene HTTP-Schicht; die Route wird deklarativ über
+  `@deepseek-ai/dsh-llm-pi-ai` (`api: openai-completions`,
+  `baseURL: https://api.arena.ai/v1`, `apiKeyEnv: ARENA_API_KEY`) in
+  `cordis.patch.yml` angelegt,
+* das Setup-CLI (`bin/arena-setup.mjs`) holt den Katalog und **generiert** den
+  Patch (`lib/patch.js` → `renderRoutePatch`), statt ihn von Hand zu pflegen,
+* die Plugin-Hälfte injiziert den Key in die Prozessumgebung des Harness
+  (nötig, weil ein Profil-Plugin nicht auf die Shell-Umgebung der App zählen
+  kann) und protokolliert eine einmalige Erreichbarkeitsprüfung,
+* Retry/Timeout/Kompression liegen beim Harness, nicht bei uns.
+
+Damit entfallen Statusseite, lokales Token, Allowlist und Katalog-Cache; dafür
+gibt es keinen zusätzlichen Port und keinen zweiten Netzwerkpfad. Die Modellliste
+ist statisch und wird mit `--sync` aktualisiert. Beide Varianten melden dieselbe
+Route `arena` an und sind daher nicht parallel installierbar.
+
+## 8. Testabdeckung
 
 `node --test "test/*.test.mjs"` (30 Tests) deckt ab: Modell-Normalisierung (mehrere
 Feldnamen), Katalog-Reihenfolge Upstream → Cache (TTL, Ablauf) → Fallback,
