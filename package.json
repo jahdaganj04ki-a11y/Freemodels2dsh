@@ -1,0 +1,60 @@
+{
+  "name": "dsh-freemodels-arena",
+  "version": "0.1.0",
+  "description": "DSH Desktop plugin (DeepSeek Harness) that makes Arena's models available in the model picker through a local, OpenAI-compatible gateway. Runs on Windows without a separate Node.js install.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./gateway": "./lib/gateway.js",
+    "./catalog": "./lib/catalog.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./cordis.patch.arena-route.example.yml": "./cordis.patch.arena-route.example.yml"
+  },
+  "bin": {
+    "arena-gateway": "./bin/arena-gateway.mjs"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "bin",
+    "scripts",
+    "cordis.patch.yml",
+    "cordis.patch.arena-route.example.yml",
+    "README.md",
+    "docs",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "start": "node bin/arena-gateway.mjs",
+    "check": "node bin/arena-gateway.mjs --check"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh-desktop",
+    "deepseek-harness",
+    "arena",
+    "openai-compatible",
+    "windows"
+  ],
+  "license": "MIT",
+  "author": "Freemodels2dsh contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jahdaganj04ki-a11y/Freemodels2dsh.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jahdaganj04ki-a11y/Freemodels2dsh/issues"
+  },
+  "private": true
+}

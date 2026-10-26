@@ -1,0 +1,39 @@
+# OPTIONAL variant of cordis.patch.yml.
+#
+# The standard patch only starts the gateway; you then add the provider once in
+# DSH Desktop under Einstellungen → Modelle (base URL http://127.0.0.1:8787/v1),
+# which is the supported surface for model settings and picks up the live model
+# catalog including every model your Arena key may use.
+#
+# This variant additionally declares the route in the profile composition, so
+# "Arena" appears in the picker right after installation, without touching the
+# settings UI. Trade-offs:
+#   * the model list below is static — new Arena models must be added by hand,
+#   * the route uses a second llm-pi-ai instance (route name `arena`), which is
+#     supported but is an extra moving part compared with the standard patch.
+#
+# To use it, install the package and then point the market entry at this file
+# (or copy its content over cordis.patch.yml before installing).
+- insert:
+    - id: freemodels-arena
+      name: dsh-freemodels-arena
+    - id: freemodels-arena-llm
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          arena:
+            displayName: Arena
+            api: openai-completions
+            baseURL: http://127.0.0.1:8787/v1
+            # Optional: a shared secret if FREEMODELS_GATEWAY_TOKEN is set.
+            # apiKeyEnv: FREEMODELS_GATEWAY_TOKEN
+            models:
+              - id: coding-router-preview
+                name: Arena Coding Router
+                contextWindow: 1000000
+                maxTokens: 128000
+                input: [text, image]
+                reasoningEfforts: false
+              # Add further Arena model ids here, e.g. the ones printed by
+              #   node bin/arena-gateway.mjs --check
+              # or served by http://127.0.0.1:8787/v1/models

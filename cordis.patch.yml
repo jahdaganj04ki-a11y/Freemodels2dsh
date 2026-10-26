@@ -1,0 +1,14 @@
+# Cordis bundle patch for the freemodels2dsh plugin.
+#
+# Installed through DSH Desktop (Einstellungen → Plugins) or with
+#   dsh plugin --profile web add <this package / git URL>
+# the market/installer reads this file and inserts the entry below into the
+# profile composition. The plugin then starts the local Arena gateway inside the
+# Harness runtime on 127.0.0.1:8787.
+#
+# The gateway must be reachable on the port declared here; if you change the port
+# (FREEMODELS_GATEWAY_PORT) update the provider base URL in the DSH model
+# settings as well.
+- insert:
+    - id: freemodels-arena
+      name: dsh-freemodels-arena
