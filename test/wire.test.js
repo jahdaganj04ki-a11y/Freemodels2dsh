@@ -24,7 +24,7 @@ const collect = async (iterable) => {
   return chunks
 }
 
-test('toOpenAiMessages serializes roles and drops reasoning and binary blocks', () => {
+test('toOpenAiMessages serializes roles and drops reasoning and binary blocks', async () => {
   const messages = [
     { role: 'system', content: [{ type: 'text', text: 'be brief' }] },
     { role: 'user', content: [
@@ -36,26 +36,81 @@ test('toOpenAiMessages serializes roles and drops reasoning and binary blocks', 
       { type: 'text', text: 'hi there' },
     ] },
   ]
-  const out = toOpenAiMessages(messages)
+  const out = await toOpenAiMessages(messages)
   assert.deepEqual(out, [
     { role: 'system', content: 'be brief' },
-    { role: 'user', content: 'hello\n\n[image attachment omitted: this free model route is text-only]' },
+    { role: 'user', content: 'hello\n\n[image attachment omitted: image — this route is text-only]' },
     { role: 'assistant', content: 'hi there' },
   ])
   assert.equal(out[2].tool_calls, undefined)
 })
 
-test('assistant tool calls and tool results survive the conversion', () => {
+test('assistant tool calls and tool results survive the conversion', async () => {
   const messages = [
     { role: 'assistant', content: [{ type: 'tool-call', id: 'call-1', name: 'lookup', arguments: '{"q":1}' }] },
     { role: 'tool', toolCallId: 'call-1', content: [{ type: 'text', text: 'result' }] },
   ]
-  const out = toOpenAiMessages(messages)
+  const out = await toOpenAiMessages(messages)
   assert.deepEqual(out[0], {
     role: 'assistant', content: null,
     tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{"q":1}' } }],
   })
   assert.deepEqual(out[1], { role: 'tool', tool_call_id: 'call-1', content: 'result' })
+})
+
+test('vision routes inline user images as base64 data URIs and cache per attachment', async () => {
+  const reads = []
+  const attachments = {
+    async readImageRequest(ref, target, signal) {
+      reads.push({ ref, target, signal })
+      return { data: new Uint8Array([1, 2, 3]), mediaType: 'image/png', bytes: 3 }
+    },
+  }
+  const image = (attachmentId) => ({
+    type: 'image',
+    attachment: {
+      attachmentId, mediaType: 'image/png', bytes: 99, width: 12, height: 34, name: 'shot.png',
+    },
+  })
+  const messages = [
+    { role: 'user', content: [{ type: 'text', text: 'look' }, image('att-1'), image('att-1')] },
+    { role: 'user', content: [image('att-2')] },
+  ]
+  const signal = AbortSignal.timeout(5000)
+  const out = await toOpenAiMessages(messages, { supportsVision: true, attachments, signal })
+  assert.equal(reads.length, 2, 'repeated attachment id is resolved only once')
+  assert.deepEqual(reads[0].target, { width: 12, height: 34, maxBytes: 1_048_576 })
+  assert.equal(reads[0].signal, signal)
+  const first = out[0].content
+  assert.deepEqual(first[0], { type: 'text', text: 'look' })
+  assert.equal(first[1].type, 'image_url')
+  assert.equal(first[1].image_url.url, 'data:image/png;base64,AQID')
+  assert.deepEqual(first[2], first[1], 'cached data URI is reused')
+  assert.equal(out[1].content[0].image_url.url, 'data:image/png;base64,AQID')
+})
+
+test('offloaded images stay as placeholder text even on vision routes', async () => {
+  const attachments = { async readImageRequest() { throw new Error('must not be called') } }
+  const messages = [{ role: 'user', content: [{
+    type: 'image',
+    offloaded: true,
+    attachment: { attachmentId: 'att-1', mediaType: 'image/png', bytes: 9, width: 1, height: 1, name: 'big.png' },
+  }] }]
+  const out = await toOpenAiMessages(messages, { supportsVision: true, attachments })
+  assert.deepEqual(out[0].content, [
+    { type: 'text', text: '[image attachment omitted: big.png — this route is text-only]' },
+  ])
+})
+
+test('vision content without the attachment service fails with UNSUPPORTED_CONTENT', async () => {
+  const messages = [{ role: 'user', content: [{
+    type: 'image',
+    attachment: { attachmentId: 'att-1', mediaType: 'image/png', bytes: 9, width: 1, height: 1 },
+  }] }]
+  await assert.rejects(
+    toOpenAiMessages(messages, { supportsVision: true }),
+    error => error.code === CODES.UNSUPPORTED_CONTENT,
+  )
 })
 
 test('toOpenAiTools omits deferred tools', () => {
@@ -65,8 +120,8 @@ test('toOpenAiTools omits deferred tools', () => {
   assert.equal(tools[0].function.name, 'ready')
 })
 
-test('buildRequestBody maps harness options to the OpenAI wire shape', () => {
-  const body = buildRequestBody({
+test('buildRequestBody maps harness options to the OpenAI wire shape', async () => {
+  const body = await buildRequestBody({
     model: 'm',
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
     temperature: 0.2,
@@ -84,13 +139,28 @@ test('buildRequestBody maps harness options to the OpenAI wire shape', () => {
   assert.equal(body.tool_choice, 'auto')
 })
 
-test('a standalone system option is prepended only when no system message exists', () => {
-  const withSystem = buildRequestBody({
+test('reasoning_effort is sent only when the provider layer supports it', async () => {
+  const options = {
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    reasoningEffort: 'high',
+  }
+  const supported = await buildRequestBody(options, 'm', { reasoningEffortSupported: true })
+  assert.equal(supported.reasoning_effort, 'high')
+  const unsupported = await buildRequestBody(options, 'm', { reasoningEffortSupported: false })
+  assert.equal(unsupported.reasoning_effort, undefined)
+  const absent = await buildRequestBody(
+    { messages: options.messages }, 'm', { reasoningEffortSupported: true },
+  )
+  assert.equal(absent.reasoning_effort, undefined)
+})
+
+test('a standalone system option is prepended only when no system message exists', async () => {
+  const withSystem = await buildRequestBody({
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
     system: 'be terse',
   }, 'm')
   assert.equal(withSystem.messages[0].role, 'system')
-  const duplicated = buildRequestBody({
+  const duplicated = await buildRequestBody({
     messages: [
       { role: 'developer', content: [{ type: 'text', text: 'existing' }] },
       { role: 'user', content: [{ type: 'text', text: 'hi' }] },
@@ -150,6 +220,15 @@ test('ChunkBuilder assembles reasoning, tool calls, and finish reasons', () => {
   const lengthBuilder = new ChunkBuilder()
   lengthBuilder.push(textEvent('x'))
   assert.equal(lengthBuilder.finish({ choices: [{ finish_reason: 'length' }] }).at(-1).reason.kind, 'max-tokens')
+})
+
+test('ChunkBuilder accepts the shortened reasoning field used by some shims', () => {
+  const builder = new ChunkBuilder()
+  const chunks = builder.push({ choices: [{ delta: { reasoning: 'think ' } }] })
+  assert.equal(chunks[0].blockType, 'reasoning')
+  builder.push({ choices: [{ delta: { reasoning: 'more' } }] })
+  const end = builder.finish({ choices: [{ finish_reason: 'stop' }] })
+  assert.equal(end.find(chunk => chunk.type === 'block-end').block.text, 'think more')
 })
 
 test('in-band error frames are thrown', () => {

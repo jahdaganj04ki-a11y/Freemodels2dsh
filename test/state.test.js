@@ -125,6 +125,19 @@ test('setModels validates rows and resetModels restores the built-in list', () =
   })
   assert.equal(state.providers.groq.models.length, 1)
   assert.equal(state.providers.groq.models[0].contextWindow, 131072)
+  // Capability flags are persisted alongside the discovered row.
+  state = transitions.setModels(state, {
+    revision: state.revision,
+    providerId: 'groq',
+    models: [
+      { id: 'openai/gpt-oss-120b', contextWindow: 131072, maxTokens: 32768, reasoning: true },
+      { id: 'vendor/vl-chat', vision: true, reasoning: 'yes' },
+    ],
+  })
+  assert.deepEqual(state.providers.groq.models.map(model => [model.vision, model.reasoning]), [
+    [false, true],
+    [true, true],
+  ])
 
   const fallback = transitions.setModels(emptyState(), {
     revision: 0,

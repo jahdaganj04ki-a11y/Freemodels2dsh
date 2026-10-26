@@ -38,10 +38,10 @@ const groqAccount = (id, apiKey) => ({
   id, label: id, apiKey, enabled: true, createdAt: '2026-10-26T00:00:00.000Z',
 })
 
-function makeAdapter(state) {
+function makeAdapter(state, attachmentResolver) {
   const runtime = createRuntime()
   const store = { read: async () => state }
-  return { adapter: new FreeModelsAdapter(store, runtime), runtime }
+  return { adapter: new FreeModelsAdapter(store, runtime, attachmentResolver), runtime }
 }
 
 const streamOptions = (provider = 'fm-groq', model = 'openai/gpt-oss-120b') => ({
@@ -57,9 +57,9 @@ const collect = async (iterable) => {
 }
 
 test('adapter registers one route per catalog provider with unique fm- keys', () => {
-  assert.equal(allAdapterRoutes().length, 8)
+  assert.equal(allAdapterRoutes().length, 9)
   const entries = configurableEntries('freemodels2dsh')
-  assert.equal(entries.length, 8)
+  assert.equal(entries.length, 9)
   assert.deepEqual(entries[0], {
     provider: 'fm-openrouter',
     displayName: getProvider('openrouter').name,
@@ -93,7 +93,11 @@ test('resolveModel returns capacities and rejects unknown models', async () => {
   const { adapter } = makeAdapter(state)
   const info = await adapter.resolveModel('fm-groq', 'openai/gpt-oss-120b')
   assert.equal(info.context.contextWindow, 131072)
-  assert.equal(info.defaultMaxTokens, 32768)
+  assert.equal(info.defaultMaxTokens, 65536)
+  assert.deepEqual(info.inputModalities, ['text'])
+  assert.ok(info.reasoning, 'reasoning models on effort-capable providers advertise efforts')
+  assert.deepEqual(info.reasoning.efforts.map(entry => entry.id), ['low', 'medium', 'high'])
+  assert.equal(info.reasoning.defaultEffort, 'medium')
   await assert.rejects(
     adapter.resolveModel('fm-groq', 'paid/model'),
     error => error instanceof LlmError && error.code === CODES.UNKNOWN_MODEL,
@@ -235,6 +239,90 @@ test('Cloudflare requests expand the per-account account id into the URL', async
   await collect(adapter.stream(streamOptions('fm-cloudflare', '@cf/openai/gpt-oss-120b')))
   assert.equal(seen[0].url, `https://api.cloudflare.com/client/v4/accounts/${'b'.repeat(32)}/ai/v1/chat/completions`)
   assert.equal(seen[0].key, 'Bearer cf-token-2222')
+})
+
+test('vision models advertise image modality and a 1 MiB image request target', async () => {
+  const state = stateFor('zai', [groqAccount('a', 'z.ai-key-000000')])
+  const { adapter } = makeAdapter(state)
+  const models = await adapter.listModels('fm-zai')
+  const vision = models.find(model => model.id === 'glm-4.6v-flash')
+  assert.deepEqual(vision.inputModalities, ['text', 'image'])
+  const info = await adapter.resolveModel('fm-zai', 'glm-4.6v-flash')
+  assert.deepEqual(info.inputModalities, ['text', 'image'])
+  // GLM thinking exists, but Z.ai does not speak the OpenAI effort field.
+  assert.equal(info.reasoning, undefined)
+  const target = adapter.imageRequestTarget('fm-zai', 'glm-4.6v-flash', { width: 4000, height: 3000, bytes: 5_000_000 })
+  assert.deepEqual(target, { width: 4000, height: 3000, maxBytes: 1_048_576 })
+})
+
+test('vision streams resolve images through the attachment service into data URIs', async (t) => {
+  const state = stateFor('zai', [groqAccount('a', 'z.ai-key-000000')])
+  const attachments = {
+    async readImageRequest(ref) {
+      return { data: new Uint8Array([9, 8, 7]), mediaType: ref.mediaType ?? 'image/png', bytes: 3 }
+    },
+  }
+  const { adapter } = makeAdapter(state, () => attachments)
+  const bodies = []
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body))
+    return sseResponse(successEvents)
+  }
+  const options = {
+    provider: 'fm-zai',
+    model: 'glm-4.6v-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: 'what is this?' },
+      { type: 'image', attachment: { attachmentId: 'att-1', mediaType: 'image/jpeg', bytes: 99, width: 8, height: 8 } },
+    ] }],
+  }
+  await collect(adapter.stream(options))
+  const parts = bodies[0].messages[0].content
+  assert.deepEqual(parts[0], { type: 'text', text: 'what is this?' })
+  assert.equal(parts[1].type, 'image_url')
+  assert.equal(parts[1].image_url.url, 'data:image/jpeg;base64,CQgH')
+  assert.equal(bodies[0].reasoning_effort, undefined, 'Z.ai never receives reasoning_effort')
+})
+
+test('text-only routes keep placeholder text and never touch the attachment service', async (t) => {
+  const state = stateFor('groq', [groqAccount('a', 'sk-groq-aaaaaaaa')])
+  const attachments = { async readImageRequest() { throw new Error('unexpected image read') } }
+  const { adapter } = makeAdapter(state, () => attachments)
+  const bodies = []
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body))
+    return sseResponse(successEvents)
+  }
+  await collect(adapter.stream({
+    provider: 'fm-groq',
+    model: 'openai/gpt-oss-120b',
+    reasoningEffort: 'low',
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: 'hi' },
+      { type: 'image', attachment: { attachmentId: 'att-1', mediaType: 'image/png', bytes: 9, width: 4, height: 4 } },
+    ] }],
+  }))
+  assert.match(bodies[0].messages[0].content, /text-only/u)
+  assert.equal(bodies[0].reasoning_effort, 'low', 'effort-capable providers forward the field')
+})
+
+test('a missing attachment service makes vision requests fail as UNSUPPORTED_CONTENT', async () => {
+  const state = stateFor('zai', [groqAccount('a', 'z.ai-key-000000')])
+  const { adapter } = makeAdapter(state) // no resolver
+  await assert.rejects(
+    collect(adapter.stream({
+      provider: 'fm-zai',
+      model: 'glm-4.6v-flash',
+      messages: [{ role: 'user', content: [
+        { type: 'image', attachment: { attachmentId: 'att-1', mediaType: 'image/png', bytes: 9, width: 4, height: 4 } },
+      ] }],
+    })),
+    error => error instanceof LlmError && error.code === CODES.UNSUPPORTED_CONTENT,
+  )
 })
 
 test('missing or unusable accounts fail with MISSING_CREDENTIAL', async () => {

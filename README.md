@@ -8,12 +8,19 @@ part of this plugin; every request goes to a hosted provider.
 
 It adds one settings tab, **Free Models**, with:
 
-- **8 curated free providers** and only the models their free tiers can call.
+- **9 curated free providers** and only the models their free tiers can call.
+- **Vision models** where the free tier actually accepts image input: user
+  images are projected through DSH Desktop's durable attachment service into
+  standard OpenAI `image_url` parts, downscaled to a 1 MiB request budget;
+  text-only routes keep deterministic placeholder text instead.
+- **Reasoning/thinking models** with streamed reasoning blocks; providers
+  whose OpenAI layer understands `reasoning_effort` expose the effort
+  selector in the model metadata, the others simply display their thinking.
 - **Multiple accounts per provider**, each with its own key (Cloudflare
   accounts also carry their 32-character Account ID).
 - A per-provider account window (click a provider row) supporting
   **add / remove / enable / disable**, connection tests, and live model-list
-  refresh.
+  refresh. Vision and reasoning capabilities are shown as tags per model.
 - Three account switching policies:
   - **Manual** — only the account you select is ever used.
   - **On error / quota** — the active account leads; invalid keys, exhausted
@@ -40,6 +47,42 @@ list at any time, and each dialog links to the provider's limits page.
 | Cloudflare Workers AI | `fm-cloudflare` | 10,000 Neurons/day, hard stop, reset at 00:00 UTC; needs API token **and** Account ID |
 | Cohere | `fm-cohere` | Trial key: 1,000 calls/month, 20 chat RPM, non-commercial evaluation |
 | Featherless.ai | `fm-featherless` | Free-tier inference with queued requests |
+| Z.ai (Zhipu GLM) | `fm-zai` | GLM-4.5-Flash and GLM-4.6V-Flash permanently free on the general OpenAI-compatible endpoint; the vision flash model accepts `image_url` input |
+
+### Vision and reasoning support
+
+| Provider | Vision models on the free tier | Reasoning | `reasoning_effort` field |
+| --- | --- | --- | --- |
+| OpenRouter | yes (e.g. Nemotron Super VL, Gemma, omni `:free` rows) | yes | yes |
+| Gemini | yes — every curated Flash/Gemma family | yes (Flash) | yes (mapped to thinking level) |
+| Groq | no — free chat lineup is text-only since August 2026 | yes | yes |
+| Mistral | only dated vision builds (e.g. `ministral-3b-2512`) when the free key admits them | no | no |
+| NVIDIA | yes — Super VL, Llama 3.2 Vision, omni endpoints | yes | yes |
+| Cloudflare | Gemma 4 A4B and Kimi K2.6 builds | yes (GPT-OSS, Gemma) | no |
+| Cohere | Command A+ and Command A Vision trial models | no | no |
+| Featherless | vision-flagged free models when available | model-dependent | no |
+| Z.ai | GLM-4.6V-Flash | yes (`reasoning_content`) | no — Z.ai uses its own `thinking` field on a different endpoint contract |
+
+### IDE/CLI-bound free models
+
+The 2026-10 review also covered free models exposed inside IDEs and CLIs
+(Hermes Agent, Qoder, ZCode, OpenCode Zen/Go). None of them can be offered
+as working plugin routes:
+
+- **Qoder / ZCode / OpenCode Zen** — free models are OAuth-entitled to the
+  vendor's own application; external API calls are blocked (OpenCode Zen
+  returns HTTP 403 outside its app since 2026-09-17), and no stable public
+  key-based contract exists.
+- **Hermes Agent** — a client, not a provider; its relay rejects third-party
+  callers.
+- **OpenCode Go** — paid subscription only.
+- **Z.ai** — the IDE coding plan (`/api/coding/paas/v4`, the Anthropic-style
+  endpoint) is coding-scenarios-only and explicitly not interchangeable with
+  the general API, so the plugin uses the documented general endpoint
+  `https://api.z.ai/api/paas/v4` instead, where GLM flash models are free.
+- **Moonshot/Kimi, MiniMax direct APIs** — no card-free free tier (Kimi
+  requires a $1 top-up); MiniMax models remain reachable through their free
+  NVIDIA NIM route, which the plugin already includes.
 
 Deliberately excluded:
 
@@ -49,7 +92,22 @@ Deliberately excluded:
 - **Hugging Face Inference Providers** — free accounts no longer receive
   inference credits (since 2026-10-07).
 - Any provider or model whose only free offering requires billing details,
-  and every local model runtime.
+  and every local model runtime (Ollama, LM Studio, llama.cpp, …).
+
+### Known verification caveats
+
+Free-tier contracts drift; these points cannot be proven from inside the
+build environment and should be re-checked with real keys on Windows:
+
+- **Cloudflare** vision through the OpenAI shim: native docs show image
+  input via a separate `image` parameter; `image_url` acceptance on
+  `/ai/v1/chat/completions` needs a live confirmation.
+- **NVIDIA** free-endpoint allowance may be framed as evaluation credits
+  rather than a permanent free tier.
+- **Mistral** free keys return 429 on some catalog ids; the curated list is
+  restricted to families free keys have been observed to answer.
+- **Z.ai** no-card eligibility and starter-credit terms for new German
+  accounts should be confirmed at signup.
 
 ## Install (Windows, DSH Desktop)
 
@@ -60,14 +118,14 @@ Deliberately excluded:
    npm run pack:plugin
    ```
 
-   This produces `freemodels2dsh-1.0.0.tgz`.
+   This produces `freemodels2dsh-1.1.0.tgz`.
 
 2. Install it into the profile DSH Desktop drives (the reserved `web`
    profile — never use `desktop`, which the harness rejects) with the DSH CLI
    bundled alongside DSH Desktop:
 
    ```powershell
-   dsh plugin --profile web add C:\absolute\path\to\freemodels2dsh-1.0.0.tgz
+   dsh plugin --profile web add C:\absolute\path\to\freemodels2dsh-1.1.0.tgz
    ```
 
    A folder path works too while developing. If your DSH Desktop build offers
@@ -91,8 +149,8 @@ lib/catalog.js    Curated providers, base URLs, free-tier discovery filters
 lib/state.js      Pure settings state, validation, transitions, redaction
 lib/storage.js    Binds the state to one grant record in dsh-credentials
 lib/rotation.js   Candidate planning, cooldowns, round-robin cursor, UI statuses
-lib/wire.js       OpenAI Chat Completions wire, SSE parser, Harness chunks
-lib/adapter.js    LlmAdapter: multi-account streaming with failover
+lib/wire.js       OpenAI Chat Completions wire, image data-URI projection, SSE parser, Harness chunks
+lib/adapter.js    LlmAdapter: multi-account streaming with failover, vision metadata
 lib/errors.js     Provider-neutral Harness error taxonomy and cooldown table
 ```
 
@@ -100,7 +158,12 @@ lib/errors.js     Provider-neutral Harness error taxonomy and cooldown table
   collide with built-in provider routes.
 - All providers are called through their OpenAI-compatible
   `chat/completions` surface (Cloudflare via `/ai/v1`) with streaming and
-  usage reporting; Cloudflare's native `/ai/models` is used for discovery.
+  usage reporting; Cloudflare's native `/ai/models` REST resource is used
+  for discovery. On vision routes, non-offloaded user images are read once
+  per attachment through the host attachment service (`readImageRequest`,
+  1 MiB cap) and inlined as base64 `image_url` parts; if the attachment
+  service is unavailable the request fails cleanly with
+  `UNSUPPORTED_CONTENT` instead of sending a broken image reference.
 - All accounts, keys, and settings are stored in **one owner-scoped grant
   record** through `@deepseek-ai/dsh-credentials` — the same secret seam the
   first-party plugins use. The browser only ever sees redacted data (key
@@ -122,7 +185,7 @@ and never echo API keys:
 ## Development
 
 ```powershell
-npm test          # 80+ node:test cases, no Harness install required
+npm test          # 95 node:test cases, no Harness install required
 npm run pack:plugin
 ```
 

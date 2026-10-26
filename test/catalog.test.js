@@ -5,9 +5,9 @@ import {
   resolveBaseUrl, resolveNativeBaseUrl, filterDiscovery, defaultModelsFor,
 } from '../lib/catalog.js'
 
-test('catalog contains exactly the eight curated no-card cloud providers', () => {
+test('catalog contains exactly the nine curated no-card cloud providers', () => {
   assert.deepEqual(PROVIDERS.map(provider => provider.id), [
-    'openrouter', 'gemini', 'groq', 'mistral', 'nvidia', 'cloudflare', 'cohere', 'featherless',
+    'openrouter', 'gemini', 'groq', 'mistral', 'nvidia', 'cloudflare', 'cohere', 'featherless', 'zai',
   ])
   for (const provider of PROVIDERS) {
     assert.match(provider.route, /^fm-/u, `${provider.id} route must use the fm- namespace`)
@@ -137,6 +137,57 @@ test('Cohere and Featherless discovery follow their free-tier rules', () => {
     filterDiscovery(featherless, payload).map(model => model.id),
     ['meta-llama/Llama-3.3-70B-Instruct', 'org/No-Tier'],
   )
+})
+
+test('Z.ai discovery adopts only the two permanently free GLM flash ids', () => {
+  const provider = getProvider('zai')
+  const payload = { data: [
+    { id: 'glm-4.5-flash' },
+    { id: 'glm-4.6v-flash' },
+    { id: 'glm-4.6' },
+    { id: 'glm-4.6v' },
+    { id: 'glm-4.6v-flashx' },
+  ] }
+  const models = filterDiscovery(provider, payload)
+  assert.deepEqual(models.map(model => model.id), ['glm-4.5-flash', 'glm-4.6v-flash'])
+  assert.equal(models[0].vision, false)
+  assert.equal(models[0].reasoning, true)
+  assert.equal(models[1].vision, true)
+  assert.equal(models[1].reasoning, true)
+  assert.equal(provider.reasoningEffort, false)
+  assert.equal(provider.baseUrl, 'https://api.z.ai/api/paas/v4')
+})
+
+test('discovery rows carry vision and reasoning capability flags', () => {
+  const openrouter = getProvider('openrouter')
+  const models = filterDiscovery(openrouter, { data: [
+    { id: 'vendor/chat:free', pricing: { prompt: '0', completion: '0' } },
+    { id: 'vendor/vl-model:free', pricing: { prompt: '0', completion: '0' }, modalities: ['text', 'image'] },
+  ] })
+  assert.equal(models[0].vision, false)
+  assert.equal(models[1].vision, true)
+
+  const groq = getProvider('groq')
+  const groqModels = filterDiscovery(groq, { data: [
+    { id: 'openai/gpt-oss-20b', active: true, type: 'chat' },
+    { id: 'vendor/plain-llm', active: true, type: 'chat' },
+  ] })
+  assert.deepEqual(groqModels.map(model => [model.id, model.reasoning]), [
+    ['openai/gpt-oss-20b', true],
+    ['vendor/plain-llm', false],
+  ])
+  assert.ok(groqModels.every(model => model.vision === false), 'Groq free chat is text-only')
+})
+
+test('static catalog flags match the advertised provider capabilities', () => {
+  const groq = getProvider('groq')
+  assert.ok(groq.defaultModels.every(model => model.vision === false))
+  assert.ok(groq.defaultModels.every(model => model.reasoning === true))
+  const gemini = getProvider('gemini')
+  assert.ok(gemini.defaultModels.some(model => model.vision === true))
+  // Z.ai streams reasoning content but does not accept OpenAI reasoning_effort.
+  assert.equal(getProvider('zai').reasoningEffort, false)
+  assert.equal(getProvider('gemini').reasoningEffort, true)
 })
 
 test('filterDiscovery tolerates malformed payloads and filter throws', () => {

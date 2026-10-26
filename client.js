@@ -50,6 +50,8 @@ window.__ModuleLoader__.load({
       testing: '测试中…',
       testOk: '连接成功',
       models: '免费模型',
+      visionBadge: '视觉',
+      reasoningBadge: '推理',
       builtInModels: '内置清单',
       refreshedModels: '已从服务商刷新',
       fetchModels: '获取可用模型',
@@ -104,6 +106,8 @@ window.__ModuleLoader__.load({
       testing: 'Testing…',
       testOk: 'Connection OK',
       models: 'Free models',
+      visionBadge: 'vision',
+      reasoningBadge: 'reasoning',
       builtInModels: 'built-in list',
       refreshedModels: 'refreshed from provider',
       fetchModels: 'Fetch available models',
@@ -168,6 +172,9 @@ window.__ModuleLoader__.load({
 .fm2d-model-list{margin:0;padding:0;max-height:160px;overflow:auto;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px}
 .fm2d-model-list li{list-style:none;padding:6px 10px;font-size:12px;color:var(--dsw-alias-label-secondary);border-bottom:.5px solid var(--dsw-alias-border-l2)}
 .fm2d-model-list li:last-child{border-bottom:0}
+.fm2d-model-row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.fm2d-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fm2d-model-tags{display:flex;gap:4px;flex-shrink:0}
 .fm2d-links{display:flex;gap:12px;flex-wrap:wrap;font-size:12px}
 .fm2d-links a{color:var(--dsw-alias-brand-primary)}
 .fm2d-card :focus-visible,.fm2d-modal-body :focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
@@ -323,7 +330,11 @@ window.__ModuleLoader__.load({
             h(Tag, { tone: models ? 'info' : 'neutral' }, models ? t('refreshedModels') : t('builtInModels'))),
           h('ul', { className: 'fm2d-model-list' },
             (models ?? catalogProvider.defaultModels ?? []).map(model =>
-              h('li', { key: model.id }, `${model.name ?? model.id} — ${model.id}`)))),
+              h('li', { key: model.id, className: 'fm2d-model-row' },
+                h('span', { className: 'fm2d-model-name' }, `${model.name ?? model.id} — ${model.id}`),
+                h('span', { className: 'fm2d-model-tags' },
+                  model.vision && h(Tag, { tone: 'info' }, t('visionBadge')),
+                  model.reasoning && h(Tag, { tone: 'neutral' }, t('reasoningBadge'))))))),
         enabledCount === 0 && h('p', { className: 'fm2d-section-hint' }, t('noEnabledAccount')),
         error && h('p', { className: 'fm2d-error', role: 'alert' }, t(errorKey(error.code))),
         notice && h('p', { className: 'fm2d-ok', role: 'status' }, notice)

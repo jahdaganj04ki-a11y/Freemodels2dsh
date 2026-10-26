@@ -75,7 +75,9 @@ function catalogView() {
 export function apply(ctx) {
   const runtime = createRuntime()
   const store = createStore(ctx, runtime)
-  const adapter = new FreeModelsAdapter(store, runtime)
+  // ctx.get keeps the dependency optional: a profile without the durable
+  // attachment service still mounts, and only vision requests are affected.
+  const adapter = new FreeModelsAdapter(store, runtime, () => ctx.get?.('attachments'))
 
   ctx.llm.registerAdapter(allAdapterRoutes(), adapter)
   ctx.llm.registerConfigurableProviders(configurableEntries(name))
@@ -129,7 +131,9 @@ export function apply(ctx) {
     } else {
       url = `${resolveBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.path}`
     }
-    const payload = await getJson({ url, apiKey: account.apiKey.trim(), signal })
+    const payload = await getJson({
+      url, apiKey: account.apiKey.trim(), extraHeaders: def.extraHeaders ?? {}, signal,
+    })
     const models = filterDiscovery(def, payload)
     if (models.length === 0) {
       throw new StoreError('NO_MODELS', 'The endpoint returned no free models for this account.')
@@ -150,7 +154,9 @@ export function apply(ctx) {
     const url = def.discovery.nativePath
       ? `${resolveNativeBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.nativePath}`
       : `${resolveBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.path}`
-    await getJson({ url, apiKey: account.apiKey.trim(), signal })
+    await getJson({
+      url, apiKey: account.apiKey.trim(), extraHeaders: def.extraHeaders ?? {}, signal,
+    })
     return { ok: true }
   }))
 

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   CODES, classifyHttpError, classifyNetworkError, cooldownMs,
-  isSwitchable, parseErrorBody,
+  isSwitchable, parseErrorBody, describeCode,
 } from '../lib/errors.js'
 
 const headers = (retryAfter) => new Headers(retryAfter ? { 'retry-after': retryAfter } : {})
@@ -70,9 +70,12 @@ test('switchable codes drive account rotation; request errors do not', () => {
   for (const code of [CODES.AUTH, CODES.QUOTA, CODES.ACCOUNT_QUOTA, CODES.RATE_LIMIT, CODES.SERVER, CODES.TRANSPORT, CODES.TIMEOUT]) {
     assert.ok(isSwitchable(code), `${code} should be switchable`)
   }
-  for (const code of [CODES.INVALID_REQUEST, CODES.UNKNOWN_MODEL, CODES.CONTEXT_WINDOW, CODES.ABORTED]) {
+  for (const code of [CODES.INVALID_REQUEST, CODES.UNKNOWN_MODEL, CODES.CONTEXT_WINDOW, CODES.ABORTED, CODES.UNSUPPORTED_CONTENT]) {
     assert.ok(!isSwitchable(code), `${code} should not be switchable`)
   }
+  // Vision/content faults belong to the request, not to the account.
+  assert.equal(cooldownMs(CODES.UNSUPPORTED_CONTENT), 0)
+  assert.equal(describeCode(CODES.UNSUPPORTED_CONTENT), 'image input unsupported')
 })
 
 test('parseErrorBody returns undefined for non-JSON input', () => {
