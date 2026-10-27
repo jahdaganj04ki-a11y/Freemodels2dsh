@@ -8,7 +8,11 @@ part of this plugin; every request goes to a hosted provider.
 
 It adds one settings tab, **Free Models**, with:
 
-- **9 curated free providers** and only the models their free tiers can call.
+- **10 curated free providers** and only the models their free tiers can call.
+- A global **Update all free model lists** button in the tab header that
+  refreshes every configured provider in one action and reports per-provider
+  failures without discarding successful discoveries. Per-provider fetch and
+  reset remain available inside each provider dialog.
 - **Vision models** where the free tier actually accepts image input: user
   images are projected through DSH Desktop's durable attachment service into
   standard OpenAI `image_url` parts, downscaled to a 1 MiB request budget;
@@ -48,6 +52,7 @@ list at any time, and each dialog links to the provider's limits page.
 | Cohere | `fm-cohere` | Trial key: 1,000 calls/month, 20 chat RPM, non-commercial evaluation |
 | Featherless.ai | `fm-featherless` | Free-tier inference with queued requests |
 | Z.ai (Zhipu GLM) | `fm-zai` | GLM-4.5-Flash and GLM-4.6V-Flash permanently free on the general OpenAI-compatible endpoint; the vision flash model accepts `image_url` input |
+| Kilo Gateway | `fm-kilo` | Public free model pool (`isFree` / `:free` rows), **works with no API key at all**: anonymous access is limited to 200 requests/hour per IP; an optional free Kilo key (GitHub login, no card) moves the limit to the account |
 
 ### Vision and reasoning support
 
@@ -62,12 +67,36 @@ list at any time, and each dialog links to the provider's limits page.
 | Cohere | Command A+ and Command A Vision trial models | no | no |
 | Featherless | vision-flagged free models when available | model-dependent | no |
 | Z.ai | GLM-4.6V-Flash | yes (`reasoning_content`) | no — Z.ai uses its own `thinking` field on a different endpoint contract |
+| Kilo Gateway | yes — e.g. Nemotron Super VL / Nano Omni, Inkling Small, Dots Note, `openrouter/free` | yes on reasoning-tagged rows | no — the gateway uses Vercel-AI-style `reasoning` parameters, not the OpenAI effort field |
+
+### Keyless accounts (Kilo Gateway)
+
+Unlike every other route, Kilo Gateway's free pool accepts requests **with
+no Authorization header**. The plugin models this as an optional-key
+provider:
+
+- Add an account with an empty API key to use the anonymous free pool
+  (200 requests/hour per IP, shared across everyone behind that IP).
+- Or paste a free Kilo key (sign up at [app.kilo.ai](https://app.kilo.ai)
+  with GitHub, no payment method) to get account-scoped limits and normal
+  multi-account rotation.
+- Anonymous requests omit the `Authorization` header entirely; the
+  discovery call (`GET /models`, public) works the same way.
+- Only rows the live catalog flags `isFree: true` (or zero-priced `:free`
+  ids) are adopted; non-chat free rows such as content-safety classifiers
+  are filtered out. The free catalog rotates upstream, so use
+  **Update all free model lists** (or the per-provider fetch) regularly.
 
 ### IDE/CLI-bound free models
 
 The 2026-10 review also covered free models exposed inside IDEs and CLIs
-(Hermes Agent, Qoder, ZCode, OpenCode Zen/Go). None of them can be offered
-as working plugin routes:
+(Hermes Agent, Qoder, ZCode, OpenCode Zen/Go). **Kilo Gateway is the
+exception that is included**: although it powers the Kilo Code IDE, its
+gateway at `api.kilo.ai/api/gateway` is a documented public OpenAI-compatible
+API with keyless free access and a public `/models` catalog, so it works in
+any harness — including DSH Desktop — without the Kilo Code application.
+The following remain excluded because they are not callable outside their
+own application:
 
 - **Qoder / ZCode / OpenCode Zen** — free models are OAuth-entitled to the
   vendor's own application; external API calls are blocked (OpenCode Zen
@@ -108,6 +137,12 @@ build environment and should be re-checked with real keys on Windows:
   restricted to families free keys have been observed to answer.
 - **Z.ai** no-card eligibility and starter-credit terms for new German
   accounts should be confirmed at signup.
+- **Kilo Gateway** free catalog rotates upstream and some models enforce
+  per-model daily caps (`limit_rpd` 429 — switch model or wait for the
+  reset); the anonymous 200 requests/hour limit is per IP, so shared
+  networks can hit it even on a fresh install. Free-tier prompts may be
+  logged by the upstream providers (each catalog row carries
+  `mayTrainOnYourPrompts`), so do not send sensitive data anonymously.
 
 ## Install (Windows, DSH Desktop)
 
@@ -118,14 +153,14 @@ build environment and should be re-checked with real keys on Windows:
    npm run pack:plugin
    ```
 
-   This produces `freemodels2dsh-1.1.0.tgz`.
+   This produces `freemodels2dsh-1.2.0.tgz`.
 
 2. Install it into the profile DSH Desktop drives (the reserved `web`
    profile — never use `desktop`, which the harness rejects) with the DSH CLI
    bundled alongside DSH Desktop:
 
    ```powershell
-   dsh plugin --profile web add C:\absolute\path\to\freemodels2dsh-1.1.0.tgz
+   dsh plugin --profile web add C:\absolute\path\to\freemodels2dsh-1.2.0.tgz
    ```
 
    A folder path works too while developing. If your DSH Desktop build offers
@@ -135,18 +170,19 @@ build environment and should be re-checked with real keys on Windows:
 3. Restart DSH Desktop (or use its plugin reload action). Open
    **Settings → Plugins → Free Models**.
 
-4. Click a provider, paste an API key (for Cloudflare also the Account ID),
-   choose a switching policy, and use **Test connection**. The provider's free
-   models appear in the model picker as soon as at least one account is
-   enabled.
+4. Click a provider, paste an API key (for Cloudflare also the Account ID;
+   for Kilo Gateway the key is optional), choose a switching policy, and use
+   **Test connection**. The provider's free models appear in the model picker
+   as soon as at least one account is enabled. Use **Update all free model
+   lists** in the tab header to refresh every provider at once.
 
 ## How it works
 
 ```
 index.js          Cordis plugin: adapter/directory registration, HTTP endpoints
 client.js         Settings tab + per-provider account modal (React, host primitives)
-lib/catalog.js    Curated providers, base URLs, free-tier discovery filters
-lib/state.js      Pure settings state, validation, transitions, redaction
+lib/catalog.js    Curated providers, base URLs, free-tier discovery filters (keyless routes flagged)
+lib/state.js      Pure settings state, validation, single + batch transitions, redaction
 lib/storage.js    Binds the state to one grant record in dsh-credentials
 lib/rotation.js   Candidate planning, cooldowns, round-robin cursor, UI statuses
 lib/wire.js       OpenAI Chat Completions wire, image data-URI projection, SSE parser, Harness chunks
@@ -180,12 +216,17 @@ and never echo API keys:
 
 `state` (GET), `account-add`, `account-remove`, `account-toggle`,
 `account-select`, `switch-mode`, `account-test`, `models-refresh`,
-`models-reset`.
+`models-refresh-all`, `models-reset`.
+
+`models-refresh-all` takes the current revision and refreshes every
+provider with at least one enabled account in a single revision; its
+response carries `refresh.updated` and `refresh.failed` so the UI can show
+a partial-failure notice without losing the successful discoveries.
 
 ## Development
 
 ```powershell
-npm test          # 95 node:test cases, no Harness install required
+npm test          # 103 node:test cases, no Harness install required
 npm run pack:plugin
 ```
 
@@ -197,10 +238,15 @@ peer packages.
 ## Privacy
 
 - API keys leave the machine only as `Authorization` headers sent to the
-  selected provider's official API endpoint.
+  selected provider's official API endpoint. Keyless Kilo accounts send no
+  authorization header at all.
 - Keys are never logged, never included in client responses, and are not part
   of ordinary settings documents.
 - Removing an account deletes its key and all runtime status for it.
+- Free-tier models (especially anonymous Kilo and NVIDIA trial endpoints)
+  may log and train on prompts per the upstream providers' terms — the
+  per-provider free-tier notes in each dialog call this out. Do not send
+  confidential data through anonymous free pools.
 
 ## License
 

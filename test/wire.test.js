@@ -264,6 +264,22 @@ test('streamChat sends attribution headers and yields the harness chunk sequence
   })
 })
 
+test('streamChat omits the Authorization header for anonymous keyless requests', async () => {
+  const seen = { init: null }
+  const fetchImpl = async (_url, init) => {
+    seen.init = init
+    return sseResponse([textEvent('ok'), { choices: [{ finish_reason: 'stop' }] }])
+  }
+  await collect(streamChat({
+    url: 'https://example.test/v1/chat/completions',
+    apiKey: '',
+    body: { model: 'kilo-auto/free', stream: true },
+    fetchImpl,
+  }))
+  assert.equal(seen.init.headers.authorization, undefined)
+  assert.equal(seen.init.headers['content-type'], 'application/json')
+})
+
 test('streamChat classifies non-2xx responses with the bounded error body', async () => {
   const fetchImpl = async () => new Response(
     JSON.stringify({ error: { message: 'rate limit', code: 'rate_limit_exceeded' } }),

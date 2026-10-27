@@ -1,7 +1,7 @@
 {
   "name": "freemodels2dsh",
-  "version": "1.1.0",
-  "description": "Free-tier cloud LLM providers for DSH Desktop with multi-account support, account rotation (manual, on-error, round robin), and vision models. No local models.",
+  "version": "1.2.0",
+  "description": "Free-tier cloud LLM providers for DSH Desktop with multi-account support, account rotation (manual, on-error, round robin), vision models, and keyless free gateways. No local models.",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -40,6 +40,8 @@
     "featherless",
     "zai",
     "glm",
+    "kilo",
+    "keyless",
     "vision"
   ],
   "scripts": {

@@ -52,6 +52,13 @@ window.__ModuleLoader__.load({
       models: '免费模型',
       visionBadge: '视觉',
       reasoningBadge: '推理',
+      refreshAll: '更新所有免费模型列表',
+      refreshingAll: '更新中…',
+      refreshAllDone: '已更新 {count} 个服务商的免费模型列表。',
+      refreshAllPartial: '已更新 {updated} 个服务商，{failed} 个失败。',
+      refreshAllNone: '还没有可刷新的服务商，请先添加账号。',
+      keylessHint: '该服务商支持匿名免费访问，API Key 可留空（按 IP 限流）。',
+      anonymous: '匿名',
       builtInModels: '内置清单',
       refreshedModels: '已从服务商刷新',
       fetchModels: '获取可用模型',
@@ -108,6 +115,13 @@ window.__ModuleLoader__.load({
       models: 'Free models',
       visionBadge: 'vision',
       reasoningBadge: 'reasoning',
+      refreshAll: 'Update all free model lists',
+      refreshingAll: 'Updating…',
+      refreshAllDone: 'Updated the free model lists of {count} provider(s).',
+      refreshAllPartial: 'Updated {updated} provider(s); {failed} failed.',
+      refreshAllNone: 'No provider can be refreshed yet — add an account first.',
+      keylessHint: 'This provider allows anonymous free access; the API key is optional (rate limit applies per IP).',
+      anonymous: 'anonymous',
       builtInModels: 'built-in list',
       refreshedModels: 'refreshed from provider',
       fetchModels: 'Fetch available models',
@@ -279,7 +293,9 @@ window.__ModuleLoader__.load({
                   onChange: enabled => onAction('account-toggle', { revision, providerId: catalogProvider.id, accountId: account.id, enabled }),
                 })),
               h('div', { className: 'fm2d-account-meta' },
-                h('span', null, account.keyHint || '—'),
+                account.keyHint
+                  ? h('span', null, account.keyHint)
+                  : (catalogProvider.keyless ? h(Tag, { tone: 'neutral' }, t('anonymous')) : h('span', null, '—')),
                 account.accountId ? h('span', null, account.accountId.slice(0, 8) + '…') : null,
                 account.enabled ? h('span', null, t('enabled')) : h('span', null, t('disabled'))),
               h('div', { className: 'fm2d-account-actions' },
@@ -312,10 +328,15 @@ window.__ModuleLoader__.load({
                 placeholder: t('apiKeyPlaceholder'), autoComplete: 'off', spellCheck: false,
                 'data-modal-autofocus': '',
               })),
+            catalogProvider.keyless && h('p', { className: 'fm2d-section-hint' }, t('keylessHint')),
             catalogProvider.requiresAccountId && h('label', { className: 'fm2d-field' }, t('accountId'),
               h('input', { value: form.accountId, onChange: set('accountId'), placeholder: t('accountIdPlaceholder'), autoComplete: 'off', spellCheck: false, maxLength: 32 })),
             h('div', { className: 'fm2d-actions' },
-              h(Button, { type: 'submit', variant: 'primary', disabled: busy || form.apiKey.trim().length === 0 }, t('add'))))),
+              h(Button, {
+                type: 'submit',
+                variant: 'primary',
+                disabled: busy || (!catalogProvider.keyless && form.apiKey.trim().length === 0),
+              }, t('add'))))),
         h('section', { className: 'fm2d-section' },
           h('p', { className: 'fm2d-section-title' }, t('models')),
           h('div', { className: 'fm2d-actions' },
@@ -397,10 +418,44 @@ window.__ModuleLoader__.load({
       const openProvider = catalog.find(item => item.id === openId)
       const openState = openId ? state?.providers?.[openId] : undefined
 
+      const refreshAll = React.useCallback(async () => {
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        setNotice(null)
+        try {
+          const next = await callApi('models-refresh-all', {
+            revision: state?.revision ?? 0,
+          }, { signal: lifetime.current?.signal })
+          setState(next)
+          const updated = next.refresh?.updated?.length ?? 0
+          const failed = next.refresh?.failed?.length ?? 0
+          if (updated === 0) setNotice(t('refreshAllNone'))
+          else if (failed > 0) {
+            setNotice(t('refreshAllPartial').replace('{updated}', updated).replace('{failed}', failed))
+          } else {
+            setNotice(t('refreshAllDone').replace('{count}', updated))
+          }
+        } catch (caught) {
+          if (caught?.code === 'CONFLICT') {
+            setError({ code: 'CONFLICT' })
+            void load(lifetime.current?.signal)
+          } else {
+            setError(caught?.code ? caught : { code: 'UNKNOWN' })
+          }
+        } finally {
+          setBusy(false)
+        }
+      }, [busy, callApi, load, state, t])
+
       return h('section', { className: 'fm2d-card', 'data-testid': 'freemodels2dsh-card' },
         h('div', { className: 'fm2d-head' },
           h('span', { className: 'fm2d-title' }, t('title')),
-          h('p', { className: 'fm2d-desc' }, t('description'))),
+          h('p', { className: 'fm2d-desc' }, t('description')),
+          h('div', { className: 'fm2d-actions' },
+            h(Button, {
+              size: 'sm', variant: 'outline', disabled: busy || loading, onClick: refreshAll,
+            }, busy ? t('refreshingAll') : t('refreshAll')))),
         loading
           ? h('p', { className: 'fm2d-hint' }, t('loading'))
           : h('div', { className: 'fm2d-list' },

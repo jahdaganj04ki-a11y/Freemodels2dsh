@@ -5,9 +5,9 @@ import {
   resolveBaseUrl, resolveNativeBaseUrl, filterDiscovery, defaultModelsFor,
 } from '../lib/catalog.js'
 
-test('catalog contains exactly the nine curated no-card cloud providers', () => {
+test('catalog contains exactly the ten curated no-card cloud providers', () => {
   assert.deepEqual(PROVIDERS.map(provider => provider.id), [
-    'openrouter', 'gemini', 'groq', 'mistral', 'nvidia', 'cloudflare', 'cohere', 'featherless', 'zai',
+    'openrouter', 'gemini', 'groq', 'mistral', 'nvidia', 'cloudflare', 'cohere', 'featherless', 'zai', 'kilo',
   ])
   for (const provider of PROVIDERS) {
     assert.match(provider.route, /^fm-/u, `${provider.id} route must use the fm- namespace`)
@@ -156,6 +156,56 @@ test('Z.ai discovery adopts only the two permanently free GLM flash ids', () => 
   assert.equal(models[1].reasoning, true)
   assert.equal(provider.reasoningEffort, false)
   assert.equal(provider.baseUrl, 'https://api.z.ai/api/paas/v4')
+})
+
+test('Kilo discovery keeps isFree rows and zero-priced :free ids only', () => {
+  const provider = getProvider('kilo')
+  assert.equal(provider.keyless, true)
+  assert.equal(provider.baseUrl, 'https://api.kilo.ai/api/gateway')
+  const payload = { data: [
+    {
+      id: 'kilo-auto/free', name: 'Auto Free', isFree: true,
+      pricing: { prompt: '0', completion: '0' },
+      context_length: 256000, top_provider: { max_completion_tokens: 32768 },
+      architecture: { input_modalities: ['text'] },
+    },
+    {
+      id: 'nvidia/nemotron-3.5-super-vl:free', name: 'Super VL', isFree: true,
+      pricing: { prompt: '0.000000000000', completion: '0.000000000000' },
+      context_length: 1000000, top_provider: { max_completion_tokens: 131072 },
+      architecture: { input_modalities: ['text', 'image', 'video'] },
+      reasoning_options: [{ type: 'toggle' }],
+    },
+    {
+      id: 'vendor/keyless-suffix:free', isFree: false,
+      pricing: { prompt: '0', completion: '0' },
+      architecture: { input_modalities: ['text'] },
+    },
+    {
+      // Paid row: -1 pricing and isFree false must never pass.
+      id: 'kilo-auto/efficient', isFree: false,
+      pricing: { prompt: '-1', completion: '-1' },
+      architecture: { input_modalities: ['text', 'image'] },
+    },
+    {
+      id: 'nvidia/nemotron-3.5-content-safety:free', isFree: true,
+      pricing: { prompt: '0', completion: '0' },
+      architecture: { input_modalities: ['text', 'image'] },
+    },
+  ] }
+  const models = filterDiscovery(provider, payload)
+  assert.deepEqual(models.map(model => model.id), [
+    'kilo-auto/free',
+    'nvidia/nemotron-3.5-super-vl:free',
+    'vendor/keyless-suffix:free',
+  ])
+  const vl = models[1]
+  assert.equal(vl.vision, true)
+  assert.equal(vl.reasoning, true)
+  assert.equal(vl.contextWindow, 1000000)
+  assert.equal(vl.maxTokens, 131072)
+  assert.equal(models[0].vision, false)
+  assert.equal(models[2].vision, false)
 })
 
 test('discovery rows carry vision and reasoning capability flags', () => {

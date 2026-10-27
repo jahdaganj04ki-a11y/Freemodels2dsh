@@ -57,9 +57,9 @@ const collect = async (iterable) => {
 }
 
 test('adapter registers one route per catalog provider with unique fm- keys', () => {
-  assert.equal(allAdapterRoutes().length, 9)
+  assert.equal(allAdapterRoutes().length, 10)
   const entries = configurableEntries('freemodels2dsh')
-  assert.equal(entries.length, 9)
+  assert.equal(entries.length, 10)
   assert.deepEqual(entries[0], {
     provider: 'fm-openrouter',
     displayName: getProvider('openrouter').name,
@@ -323,6 +323,45 @@ test('a missing attachment service makes vision requests fail as UNSUPPORTED_CON
     })),
     error => error instanceof LlmError && error.code === CODES.UNSUPPORTED_CONTENT,
   )
+})
+
+test('Kilo anonymous accounts stream without an Authorization header', async (t) => {
+  const state = stateFor('kilo', [
+    { id: 'anon', label: 'Anonymous 1', apiKey: '', enabled: true, createdAt: '2026-10-27T00:00:00.000Z' },
+  ])
+  const { adapter } = makeAdapter(state)
+  const models = await adapter.listModels('fm-kilo')
+  assert.ok(models.length > 0)
+  assert.deepEqual(models[0].provider, 'fm-kilo')
+  const calls = []
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init })
+    return sseResponse(successEvents)
+  }
+  await collect(adapter.stream({
+    provider: 'fm-kilo',
+    model: 'kilo-auto/free',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  }))
+  assert.equal(calls[0].url, 'https://api.kilo.ai/api/gateway/chat/completions')
+  assert.equal(calls[0].init.headers.authorization, undefined)
+  assert.equal(JSON.parse(calls[0].init.body).model, 'kilo-auto/free')
+
+  // A keyed Kilo account on the same provider still sends its bearer token.
+  const keyed = stateFor('kilo', [groqAccount('a', 'sk-kilo-00000000')])
+  const keyedAdapter = makeAdapter(keyed).adapter
+  globalThis.fetch = async (_url, init) => {
+    calls.push({ init })
+    return sseResponse(successEvents)
+  }
+  await collect(keyedAdapter.stream({
+    provider: 'fm-kilo',
+    model: 'kilo-auto/free',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  }))
+  assert.equal(calls.at(-1).init.headers.authorization, 'Bearer sk-kilo-00000000')
 })
 
 test('missing or unusable accounts fail with MISSING_CREDENTIAL', async () => {

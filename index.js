@@ -68,8 +68,22 @@ function catalogView() {
     docsUrl: def.docsUrl,
     freeNote: def.freeNote,
     requiresAccountId: Boolean(def.accountIdField),
+    keyless: Boolean(def.keyless),
     defaultModels: def.defaultModels.map(model => ({ ...model })),
   }))
+}
+
+/** First enabled account that can call the provider (key-bearing, or anonymous on a keyless route). */
+function usableAccountFor(def, providerState) {
+  return providerState?.accounts.find(item => item.enabled && (item.apiKey || def.keyless))
+}
+
+/** Absolute discovery URL for a provider and the account that owns the call. */
+function discoveryUrlFor(def, account) {
+  const root = def.discovery.nativePath
+    ? resolveNativeBaseUrl(def, account)
+    : resolveBaseUrl(def, account)
+  return `${root.replace(/\/+$/u, '')}${def.discovery.nativePath ?? def.discovery.path}`
 }
 
 export function apply(ctx) {
@@ -122,17 +136,12 @@ export function apply(ctx) {
     if (!def) throw new StoreError('UNKNOWN_PROVIDER', 'Unknown free provider.')
     const state = await store.read()
     const providerState = state.providers[input.providerId]
-    const account = providerState?.accounts.find(item => item.enabled && item.apiKey)
+    const account = usableAccountFor(def, providerState)
     if (!account) throw new StoreError('NO_ACCOUNT', 'Add and enable an account for this provider first.')
     const signal = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)
-    let url
-    if (def.discovery.nativePath) {
-      url = `${resolveNativeBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.nativePath}`
-    } else {
-      url = `${resolveBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.path}`
-    }
+    const url = discoveryUrlFor(def, account)
     const payload = await getJson({
-      url, apiKey: account.apiKey.trim(), extraHeaders: def.extraHeaders ?? {}, signal,
+      url, apiKey: account.apiKey?.trim() ?? '', extraHeaders: def.extraHeaders ?? {}, signal,
     })
     const models = filterDiscovery(def, payload)
     if (models.length === 0) {
@@ -142,20 +151,63 @@ export function apply(ctx) {
     return withCatalog(redactState(next, runtime))
   }))
 
+  register('models-refresh-all', ['POST'], async request => json(async () => {
+    const input = await readJson(request)
+    const state = await store.read()
+    const targets = PROVIDERS.filter(def => usableAccountFor(def, state.providers[def.id]))
+    if (targets.length === 0) {
+      throw new StoreError('NO_ACCOUNT', 'Add and enable an account for at least one provider first.')
+    }
+    // Every provider refreshes independently; one failing route must not
+    // discard the discoveries that succeeded.
+    const settled = await Promise.all(targets.map(async def => {
+      const account = usableAccountFor(def, state.providers[def.id])
+      const signal = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)
+      try {
+        const payload = await getJson({
+          url: discoveryUrlFor(def, account),
+          apiKey: account.apiKey?.trim() ?? '',
+          extraHeaders: def.extraHeaders ?? {},
+          signal,
+        })
+        const models = filterDiscovery(def, payload)
+        if (models.length === 0) {
+          return { providerId: def.id, error: { code: 'NO_MODELS', message: 'The endpoint returned no free models.' } }
+        }
+        return { providerId: def.id, models }
+      } catch (error) {
+        return {
+          providerId: def.id,
+          error: { code: error?.code ?? 'UNAVAILABLE', message: String(error?.message ?? 'refresh failed') },
+        }
+      }
+    }))
+    const items = settled.filter(entry => !entry.error)
+    const failed = settled.filter(entry => entry.error).map(entry => ({ providerId: entry.providerId, ...entry.error }))
+    if (items.length === 0) {
+      throw new StoreError('NO_MODELS', 'Every provider refresh failed; check the accounts and try again.')
+    }
+    const next = await store.setModelsBatch({ revision: Number(input.revision), items })
+    return {
+      ...withCatalog(redactState(next, runtime)),
+      refresh: { updated: items.map(entry => entry.providerId), failed },
+    }
+  }))
+
   register('account-test', ['POST'], async request => json(async () => {
     const input = await readJson(request)
     const def = getProvider(input.providerId)
     if (!def) throw new StoreError('UNKNOWN_PROVIDER', 'Unknown free provider.')
     const state = await store.read()
     const providerState = state.providers[input.providerId]
-    const account = providerState?.accounts.find(item => item.id === input.accountId && item.apiKey)
+    const account = providerState?.accounts.find(
+      item => item.id === input.accountId && (item.apiKey || def.keyless),
+    )
     if (!account) throw new StoreError('UNKNOWN_ACCOUNT', 'The account does not exist or has no API key.')
     const signal = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)
-    const url = def.discovery.nativePath
-      ? `${resolveNativeBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.nativePath}`
-      : `${resolveBaseUrl(def, account).replace(/\/+$/u, '')}${def.discovery.path}`
+    const url = discoveryUrlFor(def, account)
     await getJson({
-      url, apiKey: account.apiKey.trim(), extraHeaders: def.extraHeaders ?? {}, signal,
+      url, apiKey: account.apiKey?.trim() ?? '', extraHeaders: def.extraHeaders ?? {}, signal,
     })
     return { ok: true }
   }))

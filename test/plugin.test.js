@@ -222,6 +222,76 @@ test('the registered adapter streams a full chat call against the stored account
   assert.equal(chunks.at(-1).type, 'finish')
 })
 
+test('keyless Kilo accounts can be added and tested without an API key', async (t) => {
+  const harness = mockContext()
+  apply(harness.ctx)
+
+  const added = await call(harness.routes, 'account-add', {
+    body: { revision: 0, providerId: 'kilo', label: 'anon', apiKey: '' },
+  })
+  assert.equal(added.status, 200)
+  const body = await added.json()
+  const account = body.providers.kilo.accounts[0]
+  assert.equal(account.hasKey, false)
+  assert.equal(body.catalog.find(entry => entry.id === 'kilo').keyless, true)
+
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async url => {
+    assert.equal(url, 'https://api.kilo.ai/api/gateway/models')
+    return new Response(JSON.stringify({ data: [
+      { id: 'kilo-auto/free', isFree: true, pricing: { prompt: '0', completion: '0' }, architecture: { input_modalities: ['text'] } },
+    ] }), { status: 200 })
+  }
+  const ok = await call(harness.routes, 'account-test', { body: { providerId: 'kilo', accountId: account.id } })
+  assert.equal(ok.status, 200)
+
+  const refreshed = await call(harness.routes, 'models-refresh', {
+    body: { revision: 1, providerId: 'kilo' },
+  })
+  assert.equal(refreshed.status, 200)
+  const refreshedBody = await refreshed.json()
+  assert.deepEqual(refreshedBody.providers.kilo.models.map(model => model.id), ['kilo-auto/free'])
+})
+
+test('models-refresh-all updates every configured provider and reports partial failures', async (t) => {
+  const harness = mockContext()
+  apply(harness.ctx)
+  await call(harness.routes, 'account-add', { body: { revision: 0, providerId: 'groq', apiKey: API_KEY } })
+  await call(harness.routes, 'account-add', { body: { revision: 1, providerId: 'kilo', apiKey: '' } })
+
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original })
+  globalThis.fetch = async url => {
+    if (url === 'https://api.groq.com/openai/v1/models') {
+      return new Response(JSON.stringify({ data: [
+        { id: 'openai/gpt-oss-120b', active: true, type: 'chat' },
+        { id: 'vendor/whisper', active: true, type: 'audio' },
+      ] }), { status: 200 })
+    }
+    if (url === 'https://api.kilo.ai/api/gateway/models') {
+      return new Response('{}', { status: 429, headers: { 'retry-after': '5' } })
+    }
+    throw new Error(`unexpected url ${url}`)
+  }
+
+  const response = await call(harness.routes, 'models-refresh-all', { body: { revision: 2 } })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.deepEqual(body.refresh.updated, ['groq'])
+  assert.equal(body.refresh.failed[0].providerId, 'kilo')
+  assert.equal(body.refresh.failed[0].code, 'RATE_LIMIT')
+  assert.deepEqual(body.providers.groq.models.map(model => model.id), ['openai/gpt-oss-120b'])
+  assert.equal(body.providers.kilo.models, null)
+
+  // With no configured provider the batch is rejected outright.
+  const empty = mockContext()
+  apply(empty.ctx)
+  const none = await call(empty.routes, 'models-refresh-all', { body: { revision: 0 } })
+  assert.equal(none.status, 400)
+  assert.equal((await none.json()).code, 'NO_ACCOUNT')
+})
+
 test('oversized bodies are rejected', async () => {
   const harness = mockContext()
   apply(harness.ctx)

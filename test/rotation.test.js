@@ -34,6 +34,20 @@ test('usableAccounts requires enabled, keyed, and non-cooling accounts', () => {
   assert.deepEqual(usableAccounts(state, runtime, 'groq', 62_000).map(item => item.id), ['a'])
 })
 
+test('keyless providers accept enabled accounts without a stored key', () => {
+  const runtime = createRuntime()
+  const state = providerState({ accounts: [
+    { id: 'anon', apiKey: '', enabled: true },
+    account('keyed'),
+  ] })
+  // Normal providers still reject the keyless account.
+  assert.deepEqual(usableAccounts(state, runtime, 'groq', 0).map(item => item.id), ['keyed'])
+  // Kilo's anonymous free pool accepts both, stored order preserved.
+  assert.deepEqual(usableAccounts(state, runtime, 'kilo', 0).map(item => item.id), ['anon', 'keyed'])
+  const disabled = providerState({ accounts: [{ id: 'anon', apiKey: '', enabled: false }] })
+  assert.deepEqual(usableAccounts(disabled, runtime, 'kilo', 0), [])
+})
+
 test('manual mode plans exactly the selected account', () => {
   const runtime = createRuntime()
   const state = providerState({ switchMode: SWITCH_MODES.MANUAL, manualAccountId: 'b' })

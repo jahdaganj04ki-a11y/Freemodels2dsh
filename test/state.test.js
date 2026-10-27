@@ -45,6 +45,29 @@ test('addAccount rejects unknown providers, bad keys, and whitespace', () => {
   )
 })
 
+test('keyless providers accept an anonymous account without an API key', () => {
+  const anonymous = transitions.addAccount(emptyState(), {
+    revision: 0, providerId: 'kilo', label: '', apiKey: '',
+  })
+  const account = anonymous.providers.kilo.accounts[0]
+  assert.equal(account.apiKey, '')
+  assert.equal(account.enabled, true)
+  assert.match(account.label, /Anonymous/u)
+
+  // A real key still works on the same keyless provider.
+  const keyed = transitions.addAccount(anonymous, {
+    revision: anonymous.revision, providerId: 'kilo', apiKey: KEY,
+  })
+  assert.equal(keyed.providers.kilo.accounts.length, 2)
+  assert.equal(keyed.providers.kilo.accounts[1].apiKey, KEY)
+
+  // A key-bearing provider must not gain the keyless exception.
+  assert.throws(
+    () => transitions.addAccount(emptyState(), { revision: 0, providerId: 'groq', apiKey: '' }),
+    error => error.code === 'BAD_KEY',
+  )
+})
+
 test('Cloudflare accounts require a 32-hex account id', () => {
   assert.throws(
     () => addProvider(emptyState(), 'cloudflare'),
@@ -153,6 +176,37 @@ test('setModels validates rows and resetModels restores the built-in list', () =
   )
   state = transitions.resetModels(state, { revision: state.revision, providerId: 'groq' })
   assert.equal(state.providers.groq.models, null)
+})
+
+test('setModelsBatch commits several providers in one revision and skips empty batches', () => {
+  let state = addProvider(emptyState(), 'groq')
+  state = transitions.addAccount(state, { revision: state.revision, providerId: 'zai', apiKey: KEY })
+  const before = state.revision
+  state = transitions.setModelsBatch(state, {
+    revision: before,
+    items: [
+      { providerId: 'groq', models: [{ id: 'openai/gpt-oss-20b', vision: false, reasoning: true }] },
+      { providerId: 'zai', models: [
+        { id: 'glm-4.6v-flash', vision: true, reasoning: true },
+        { id: 'bad id' },
+      ] },
+      // Unknown provider and an empty discovery are ignored.
+      { providerId: 'nope', models: [{ id: 'x' }] },
+      { providerId: 'groq', models: [] },
+    ],
+  })
+  assert.equal(state.revision, before + 1)
+  assert.deepEqual(state.providers.groq.models.map(m => m.id), ['openai/gpt-oss-20b'])
+  assert.deepEqual(state.providers.zai.models.map(m => [m.id, m.vision]), [['glm-4.6v-flash', true]])
+
+  assert.throws(
+    () => transitions.setModelsBatch(emptyState(), { revision: 0, items: [{ providerId: 'groq', models: [] }] }),
+    error => error.code === 'NO_MODELS',
+  )
+  assert.throws(
+    () => transitions.setModelsBatch(state, { revision: state.revision, items: [] }),
+    error => error.code === 'NO_MODELS',
+  )
 })
 
 test('redactState never exposes key material and merges runtime statuses', () => {
