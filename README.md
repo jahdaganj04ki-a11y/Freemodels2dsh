@@ -146,6 +146,10 @@ build environment and should be re-checked with real keys on Windows:
 
 ## Install (Windows, DSH Desktop)
 
+> **Deutsch:** Eine ausführliche Schritt-für-Schritt-Anleitung mit
+> Update, Deinstallation und Fehler­tabelle steht in
+> [INSTALL.md](./INSTALL.md).
+
 1. Build the package:
 
    ```powershell
